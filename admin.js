@@ -820,7 +820,7 @@ function sendWhatsAppCharge(charge) {
     "Aqui é da *Parfum Vidigal*.\n\n" +
     "Estamos entrando em contato para lembrar sobre o pagamento:\n\n" +
     "*Valor:* " + formatPrice(charge.amount) + "\n" +
-    "*Referente a:* " + (charge.description || "Compra na Parfum Vidigal") + "\n" +
+    "Esse é o pix para o pagamento: parfumvidigal@gmail.com *Referente a:* " + (charge.description || "Compra na Parfum Vidigal") + "\n" +
     "*Perfumes:* " + getChargeProducts(charge, getProducts()).map(item =>
       item.product.name + " (" + item.quantity + " un.)"
     ).join(", ") + "\n\n" +
