@@ -1,3 +1,4 @@
+
 const defaultProducts = [
   {
     id: 1,
@@ -64,13 +65,27 @@ const defaultProducts = [
   }
 ];
 
+// CONFIGURAÇÕES
+const PRODUCT_KEY = "parfumvidigal_products";
+const CART_KEY = "parfumvidigal_cart";
 const INTEREST_KEY = "parfumvidigal_product_interest";
 
-let products = JSON.parse(
-  localStorage.getItem("parfumvidigal_products") || "null"
-) || defaultProducts;
+function readStorage(key, fallback) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key));
+    return value === null ? fallback : value;
+  } catch (error) {
+    console.warn("Erro ao ler armazenamento:", key, error);
+    return fallback;
+  }
+}
 
-let cart = [];
+let products = readStorage(PRODUCT_KEY, defaultProducts);
+if (!Array.isArray(products)) products = defaultProducts;
+
+let cart = readStorage(CART_KEY, []);
+if (!Array.isArray(cart)) cart = [];
+
 const searchTermsRecorded = new Set();
 
 const money = value =>
@@ -79,15 +94,34 @@ const money = value =>
     currency: "BRL"
   });
 
-function getInterestStats() {
+// PROTEGER TEXTOS EXIBIDOS NO HTML
+function escapeHTML(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// SALVAR CARRINHO
+function saveCart() {
   try {
-    return JSON.parse(localStorage.getItem(INTEREST_KEY) || "{}") || {};
-  } catch {
-    return {};
+    localStorage.setItem(CART_KEY, JSON.stringify(cart));
+  } catch (error) {
+    console.warn("Não foi possível salvar o carrinho.", error);
   }
 }
 
+// ESTATÍSTICAS DE INTERESSE
+function getInterestStats() {
+  const stats = readStorage(INTEREST_KEY, {});
+  return stats && typeof stats === "object" ? stats : {};
+}
+
 function registerProductInterest(productId, type) {
+  if (!["views", "searches", "clicks"].includes(type)) return;
+
   const stats = getInterestStats();
   const key = String(productId);
 
@@ -99,14 +133,12 @@ function registerProductInterest(productId, type) {
     };
   }
 
-  if (!["views", "searches", "clicks"].includes(type)) return;
-
   stats[key][type] = (Number(stats[key][type]) || 0) + 1;
 
   try {
     localStorage.setItem(INTEREST_KEY, JSON.stringify(stats));
   } catch (error) {
-    console.warn("Não foi possível registrar o interesse do produto.", error);
+    console.warn("Erro ao registrar interesse.", error);
   }
 }
 
@@ -114,55 +146,78 @@ function registerProductInterest(productId, type) {
 function renderProducts() {
   const searchInput = document.getElementById("search");
   const categoryInput = document.getElementById("category");
+  const productList = document.getElementById("product-list");
 
-  const search = searchInput.value.trim().toLocaleLowerCase("pt-BR");
-  const category = categoryInput.value;
+  if (!productList) {
+    console.error("Elemento #product-list não encontrado.");
+    return;
+  }
+
+  const search = searchInput
+    ? searchInput.value.trim().toLocaleLowerCase("pt-BR")
+    : "";
+
+  const category = categoryInput
+    ? categoryInput.value
+    : "todos";
 
   const filtered = products.filter(product =>
-    product.name.toLocaleLowerCase("pt-BR").includes(search) &&
+    (String(product.name).toLocaleLowerCase("pt-BR").includes(search) || String(product.id) === search) &&
     (category === "todos" || product.category === category)
   );
 
-  // Registra visualizações dos produtos exibidos.
   filtered.forEach(product => {
     registerProductInterest(product.id, "views");
   });
 
-  // Registra uma pesquisa por termo digitado.
   if (search.length >= 2 && !searchTermsRecorded.has(search)) {
     searchTermsRecorded.add(search);
 
     products.forEach(product => {
-      if (product.name.toLocaleLowerCase("pt-BR").includes(search)) {
+      if (String(product.name).toLocaleLowerCase("pt-BR").includes(search)) {
         registerProductInterest(product.id, "searches");
       }
     });
   }
 
-  document.getElementById("product-list").innerHTML =
-    filtered.map(product => `
-      <div class="product-card">
-        <img src="${product.image}" alt="${product.name}">
-        <h3>${product.name}</h3>
-        <p>${money(product.price)}</p>
-        <button onclick="addToCart(${Number(product.id)})">
-          ADICIONAR AO CARRINHO
-        </button>
-      </div>
-    `).join("") || "<p>Nenhum perfume encontrado.</p>";
+  productList.innerHTML = filtered.map(product => `
+    <div class="product-card">
+      <img
+        src="${escapeHTML(product.image)}"
+        alt="${escapeHTML(product.name)}"
+        loading="lazy"
+      >
+
+      <h3>${escapeHTML(product.name)}</h3>
+      <small class="product-id">Código: ${escapeHTML(product.id)}</small>
+
+      <p>${money(product.price)}</p>
+
+      <button
+        type="button"
+        data-add-cart="${escapeHTML(product.id)}"
+      >
+        ADICIONAR AO CARRINHO
+      </button>
+    </div>
+  `).join("") || "<p>Nenhum perfume encontrado.</p>";
 }
 
 // ADICIONAR AO CARRINHO
 function addToCart(id) {
   const product = products.find(p => String(p.id) === String(id));
-  if (!product) return;
+
+  if (!product) {
+    alert("Produto não encontrado!");
+    return;
+  }
 
   registerProductInterest(product.id, "clicks");
 
   const item = cart.find(p => String(p.id) === String(id));
 
   if (item) {
-    item.quantity++;
+    item.quantity = Number(item.quantity) + 1;
   } else {
     cart.push({
       ...product,
@@ -170,45 +225,113 @@ function addToCart(id) {
     });
   }
 
+  saveCart();
   updateCart();
 }
 
 // REMOVER DO CARRINHO
 function removeFromCart(id) {
   cart = cart.filter(p => String(p.id) !== String(id));
+
+  saveCart();
+  updateCart();
+}
+
+// AUMENTAR QUANTIDADE
+function increaseQuantity(id) {
+  const item = cart.find(p => String(p.id) === String(id));
+
+  if (!item) return;
+
+  item.quantity = Number(item.quantity) + 1;
+
+  saveCart();
+  updateCart();
+}
+
+// DIMINUIR QUANTIDADE
+function decreaseQuantity(id) {
+  const item = cart.find(p => String(p.id) === String(id));
+
+  if (!item) return;
+
+  item.quantity = Number(item.quantity) - 1;
+
+  if (item.quantity <= 0) {
+    removeFromCart(id);
+    return;
+  }
+
+  saveCart();
   updateCart();
 }
 
 // ATUALIZAR CARRINHO
 function updateCart() {
-  const count = cart.reduce((sum, p) => sum + p.quantity, 0);
-
-  const total = cart.reduce(
-    (sum, p) => sum + p.price * p.quantity,
+  const count = cart.reduce(
+    (sum, p) => sum + Number(p.quantity),
     0
   );
 
-  document.getElementById("cart-count").textContent = count;
-  document.getElementById("cart-total").textContent = money(total);
+  const total = cart.reduce(
+    (sum, p) => sum + Number(p.price) * Number(p.quantity),
+    0
+  );
 
-  document.getElementById("cart-items").innerHTML =
-    cart.map(p => `
-      <div class="cart-item">
-        <div>
-          <strong>${p.name}</strong>
-          <p>${p.quantity}x ${money(p.price)}</p>
+  const cartCount = document.getElementById("cart-count");
+  const cartTotal = document.getElementById("cart-total");
+  const cartItems = document.getElementById("cart-items");
+
+  if (cartCount) cartCount.textContent = count;
+  if (cartTotal) cartTotal.textContent = money(total);
+
+  if (!cartItems) {
+    console.warn("Elemento #cart-items não encontrado.");
+    return;
+  }
+
+  cartItems.innerHTML = cart.map(p => `
+    <div class="cart-item">
+      <div>
+        <strong>${escapeHTML(p.name)}</strong>
+        <p>${money(p.price)}</p>
+
+        <div class="quantity-controls">
+          <button type="button" data-decrease="${escapeHTML(p.id)}">−</button>
+
+          <span>${Number(p.quantity)}</span>
+
+          <button type="button" data-increase="${escapeHTML(p.id)}">+</button>
         </div>
-        <button onclick="removeFromCart(${Number(p.id)})">
-          Remover
-        </button>
+
+        <p>Subtotal: ${money(Number(p.price) * Number(p.quantity))}</p>
       </div>
-    `).join("") || "<p>Seu carrinho está vazio.</p>";
+
+      <button
+        type="button"
+        data-remove="${escapeHTML(p.id)}"
+      >
+        Remover
+      </button>
+    </div>
+  `).join("") || "<p>Seu carrinho está vazio.</p>";
 }
 
 // ABRIR E FECHAR CARRINHO
 function toggleCart() {
-  document.getElementById("cart").classList.toggle("active");
-  document.getElementById("overlay").classList.toggle("active");
+  const cartElement = document.getElementById("cart");
+  const overlay = document.getElementById("overlay");
+
+  if (!cartElement) {
+    console.error("Elemento #cart não encontrado no HTML.");
+    return;
+  }
+
+  cartElement.classList.toggle("active");
+
+  if (overlay) {
+    overlay.classList.toggle("active");
+  }
 }
 
 // FINALIZAR COMPRA PELO WHATSAPP
@@ -219,29 +342,79 @@ function checkout() {
   }
 
   const items = cart.map(p =>
-    `${p.name} - ${p.quantity}x - ${money(p.price * p.quantity)}`
+    `${p.name} - ${p.quantity}x - ${money(Number(p.price) * Number(p.quantity))}`
   ).join("\n");
 
   const total = cart.reduce(
-    (sum, p) => sum + p.price * p.quantity,
+    (sum, p) => sum + Number(p.price) * Number(p.quantity),
     0
   );
 
   const message =
-    `Olá! Gostaria de fazer um pedido na PARFUMVIDIGAL:\n\n${items}\n\nTotal: ${money(total)}`;
+    `Olá! Gostaria de fazer um pedido na PARFUMVIDIGAL:\n\n` +
+    `${items}\n\nTotal: ${money(total)}`;
 
   const whatsapp = "5527998908720";
 
-  window.open(
-    `https://wa.me/${whatsapp}?text=${encodeURIComponent(message)}`,
-    "_blank"
-  );
+  const url =
+    `https://wa.me/${whatsapp}?text=${encodeURIComponent(message)}`;
+
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
-// PESQUISA E FILTROS
-document.getElementById("search").addEventListener("input", renderProducts);
-document.getElementById("category").addEventListener("change", renderProducts);
-
 // INICIAR LOJA
-renderProducts();
-updateCart();
+function initStore() {
+  const searchInput = document.getElementById("search");
+  const categoryInput = document.getElementById("category");
+
+  if (searchInput) {
+    searchInput.addEventListener("input", renderProducts);
+  }
+
+  if (categoryInput) {
+    categoryInput.addEventListener("change", renderProducts);
+  }
+
+  // Eventos dos botões de produtos e carrinho
+  document.addEventListener("click", function(event) {
+    const button = event.target.closest("button");
+
+    if (!button) return;
+
+    if (button.hasAttribute("data-add-cart")) {
+      addToCart(button.getAttribute("data-add-cart"));
+    }
+
+    if (button.hasAttribute("data-remove")) {
+      removeFromCart(button.getAttribute("data-remove"));
+    }
+
+    if (button.hasAttribute("data-increase")) {
+      increaseQuantity(button.getAttribute("data-increase"));
+    }
+
+    if (button.hasAttribute("data-decrease")) {
+      decreaseQuantity(button.getAttribute("data-decrease"));
+    }
+  });
+
+  renderProducts();
+  updateCart();
+}
+
+function reloadStoreProducts() {
+  const updated = readStorage(PRODUCT_KEY, defaultProducts);
+  products = Array.isArray(updated) ? updated : defaultProducts;
+  renderProducts();
+}
+window.addEventListener("storage", event => {
+  if (event.key === PRODUCT_KEY) reloadStoreProducts();
+});
+window.addEventListener("pageshow", reloadStoreProducts);
+window.addEventListener("focus", reloadStoreProducts);
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initStore);
+} else {
+  initStore();
+}
